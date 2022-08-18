@@ -46,9 +46,6 @@ module Linkage = struct
 
   let js = { mode = Byte; ext = ".bc.js"; flags = [] }
 
-  let is_plugin t =
-    List.mem (List.map ~f:Mode.plugin_ext Mode.all) t.ext ~equal:String.equal
-
   let c_flags = [ "-output-obj" ]
 
   let o_flags = [ "-output-complete-obj" ]
@@ -161,10 +158,10 @@ let link_exe ~loc ~name ~(linkage : Linkage.t) ~cm_files ~link_time_code_gen
        While this fix works, more principled solutions should be explored:
 
        - Having foreign stubs declare dependencies on foreign libraries
-       explicitly in the dune file.
+         explicitly in the dune file.
 
        - Implicitly declaring a dependency of all foreign stubs on all foreign
-       libraries.
+         libraries.
 
        In each case, we could then pass the argument in dependency order, which
        would provide a better fix for this issue. *)
@@ -229,7 +226,13 @@ let link_many ?link_args ?o_files ?(embed_in_plugin_libraries = []) ?sandbox
     ~programs ~linkages ~promote cctx =
   let open Memo.O in
   let modules = Compilation_context.modules cctx in
-  let* link_time_code_gen = Link_time_code_gen.handle_special_libs cctx in
+  let* link_time_code_gen =
+    match embed_in_plugin_libraries with
+    | [] -> Link_time_code_gen.handle_special_libs cctx
+    | libs ->
+      let cc = CC.for_plugin_executable cctx ~embed_in_plugin_libraries:libs in
+      Link_time_code_gen.handle_special_libs cc
+  in
   let+ for_exes =
     Memo.parallel_map programs
       ~f:(fun { Program.name; main_module_name; loc } ->
@@ -250,15 +253,6 @@ let link_many ?link_args ?o_files ?(embed_in_plugin_libraries = []) ?sandbox
               if Linkage.is_js linkage then
                 link_js ~loc ~name ~cm_files ~promote cctx ~link_time_code_gen
               else
-                let* link_time_code_gen =
-                  match Linkage.is_plugin linkage with
-                  | false -> Memo.return link_time_code_gen
-                  | true ->
-                    let cc =
-                      CC.for_plugin_executable cctx ~embed_in_plugin_libraries
-                    in
-                    Link_time_code_gen.handle_special_libs cc
-                in
                 link_exe cctx ~loc ~name ~linkage ~cm_files ~link_time_code_gen
                   ~promote ?link_args ?o_files ?sandbox)
         in
